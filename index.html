@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Motion Alert – Phone Camera</title>
+<style>
+body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans Bengali", sans-serif; margin: 12px; }
+#view { width: 100%; max-width: 420px; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+video { width: 100%; transform: scaleX(-1); }
+#status { margin-top: 8px; font-size: 14px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+button { padding: 10px 14px; border: 0; background: #1976d2; color: #fff; border-radius: 8px; }
+button.stop { background: #c62828; }
+.pill { background: #eee; padding: 6px 10px; border-radius: 999px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h2>ক্যামেরা মোশন অ্যালার্ট</h2>
+<div class="row">
+<button id="startBtn">Start</button>
+<button id="stopBtn" class="stop">Stop</button>
+<span class="pill">Facing: 
+<select id="facing">
+<option value="environment" selected>Back</option>
+<option value="user">Front</option>
+</select></span>
+<span class="pill">Sensitivity: 
+<input id="sens" type="range" min="5" max="50" value="20" />
+<span id="sensVal">20</span></span>
+</div>
+<div id="view">
+<video id="video" playsinline autoplay muted></video>
+</div>
+<div id="status">Status: idle</div>
+<canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+
+<script>
+/* CONFIG */
+const BOT_TOKEN = ""; 
+const CHAT_ID = ""; 
+
+/* PARAMETERS */
+let PIXEL_DIFF_THRESHOLD = 20; 
+const MOTION_PERCENT_THRESHOLD = 0.02;
+const CAPTURE_INTERVAL_MS = 300;
+const COOLDOWN_MS = 20000;
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const statusEl = document.getElementById('status');
+const sens = document.getElementById('sens');
+const sensVal = document.getElementById('sensVal');
+const facingSel = document.getElementById('facing');
+
+let stream = null;
+let timer = null;
+let lastImageData = null;
+let lastAlertTs = 0;
+let audioCtx = null;
+
+sens.addEventListener('input', () => {
+    PIXEL_DIFF_THRESHOLD = Number(sens.value);
+    sensVal.textContent = sens.value;
+});
+
+async function startCamera() {
+    stopCamera();
+    try {
+        // মূল ক্যামেরা চেষ্টা
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: facingSel.value }, width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+        });
+    } catch (e) {
+        // fallback: simple front camera
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            alert('Primary camera blocked or unavailable, using default camera.');
+        } catch (err) {
+            setStatus('Camera error: ' + err.message);
+            return;
+        }
+    }
+    video.srcObject = stream;
+    video.onloadedmetadata = () => video.play();
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    timer = setInterval(checkMotion, CAPTURE_INTERVAL_MS);
+    setStatus('Running: motion detection active…');
+}
+
+function stopCamera() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    lastImageData = null;
+    setStatus('Stopped.');
+}
+
+function setStatus(msg) { statusEl.textContent = 'Status: ' + msg; }
+
+function checkMotion() {
+    if (!video.videoWidth) return;
+
+    canvas.width = 320;
+    canvas.height = Math.round(320 * (video.videoHeight / video.videoWidth));
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const curr = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const currData = curr.data;
+
+    if (!lastImageData) { lastImageData = currData.slice(); return; }
+
+    let changed = 0;
+    for (let i = 0; i < currData.length; i += 4) {
+        const dr = Math.abs(currData[i] - lastImageData[i]);
+        const dg = Math.abs(currData[i+1] - lastImageData[i+1]);
+        const db = Math.abs(currData[i+2] - lastImageData[i+2]);
+        const diff = (dr + dg + db) / 3;
+        if (diff > PIXEL_DIFF_THRESHOLD) changed++;
+    }
+
+    const totalPixels = currData.length / 4;
+    const changeRate = changed / totalPixels;
+    lastImageData = currData.slice();
+
+    if (changeRate >= MOTION_PERCENT_THRESHOLD) {
+        const now = Date.now();
+        if (now - lastAlertTs > COOLDOWN_MS) {
+            lastAlertTs = now;
+            alertUser(changeRate);
+        } else {
+            setStatus(`Motion seen (cooldown)… ${Math.round(changeRate*100)}% change`);
+        }
+    } else {
+        setStatus(`Watching… change=${(changeRate*100).toFixed(1)}%`);
+    }
+}
+
+function beep(duration=800, freq=1000, type='sine') {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.2, audioCtx.currentTime + 0.05);
+    osc.start();
+    setTimeout(() => {
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.05);
+        osc.stop();
+    }, duration);
+}
+
+async function sendTelegram(text, blobPhoto=null) {
+    if (!BOT_TOKEN || !CHAT_ID) return;
+    const api = `https://api.telegram.org/bot${BOT_TOKEN}`;
+    try {
+        if (blobPhoto) {
+            const fd = new FormData();
+            fd.append('chat_id', CHAT_ID);
+            fd.append('caption', text);
+            fd.append('photo', blobPhoto, 'snapshot.jpg');
+            await fetch(`${api}/sendPhoto`, { method: 'POST', body: fd });
+        } else {
+            await fetch(`${api}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: CHAT_ID, text }) });
+        }
+    } catch(e) { console.warn('Telegram send failed:', e); }
+}
+
+function getSnapshotBlob() {
+    return new Promise(resolve => { canvas.toBlob(b => resolve(b), 'image/jpeg', 0.8); });
+}
+
+async function alertUser(changeRate) {
+    beep();
+    if (navigator.vibrate) navigator.vibrate([200,100,200]);
+    const ts = new Date().toLocaleString();
+    const msg = `Motion detected (${(changeRate*100).toFixed(1)}%) at ${ts}`;
+    const photo = await getSnapshotBlob();
+    await sendTelegram(msg, photo);
+    setStatus('ALERT sent! ' + msg);
+}
+
+document.getElementById('startBtn').addEventListener('click', async () => {
+    await startCamera();
+});
+
+document.getElementById('stopBtn').addEventListener('click', stopCamera);
+</script>
+</body>
+</html>
