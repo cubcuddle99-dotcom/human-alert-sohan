@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ডেড ম্যাজিক গণনা</title>
+
+<style>
+:root{--bg:#f5f7fb;--text:#222;--card:#fff;--primary:#4f46e5}
+body.dark{--bg:#0f172a;--text:#e5e7eb;--card:#1e293b;--primary:#22c55e}
+body{margin:0;font-family:system-ui,"Noto Sans Bengali",sans-serif;background:var(--bg);color:var(--text)}
+.container{max-width:520px;margin:20px auto;padding:15px}
+.card{background:var(--card);border-radius:14px;padding:20px;box-shadow:0 10px 25px rgba(0,0,0,.1)}
+input,button,select{width:100%;padding:12px;margin-top:10px;border-radius:8px;border:1px solid #ccc}
+button{background:var(--primary);color:#fff;border:none;cursor:pointer}
+.result{margin-top:15px;line-height:1.7}
+.ai-box{margin-top:15px;padding:12px;border-left:5px solid var(--primary);background:rgba(0,0,0,.05);border-radius:8px}
+.top{display:flex;gap:10px}
+.small-btn{flex:1}
+.header{text-align:center;margin-bottom:10px}
+.header h1{margin:5px 0}
+.header small{opacity:.7}
+canvas{margin-top:10px}
+</style>
+</head>
+
+<body>
+<div class="container">
+<div class="card">
+
+<div class="top">
+<select id="lang">
+<option value="bn">বাংলা</option>
+<option value="en">English</option>
+</select>
+<button onclick="toggleTheme()" class="small-btn">🌙 / ☀️</button>
+</div>
+
+<div class="header">
+  <h1 id="title">ডেড গণনা</h1>
+  <small>Created by MD SOHAN MONDAL</small>
+</div>
+
+<label id="dobLabel">জন্ম তারিখ নির্বাচন করুন</label>
+<input type="date" id="dob">
+
+<button onclick="calculateAge()" id="calcBtn">বয়স হিসাব করুন</button>
+
+<div class="result" id="output"></div>
+<div class="ai-box" id="ai"></div>
+
+<button onclick="downloadCard()">⬇ Age Card</button>
+<button onclick="generateQR()">📷 QR Code</button>
+
+<canvas id="cardCanvas" width="400" height="220" style="display:none"></canvas>
+<canvas id="qrCanvas" width="200" height="200" style="display:none"></canvas>
+
+</div>
+</div>
+
+<script>
+let birthDate,timer,currentLang="bn";
+function toggleTheme(){document.body.classList.toggle("dark")}
+lang.onchange=e=>{currentLang=e.target.value;updateLang()}
+
+function updateLang(){
+title.innerText=currentLang=="bn"?"ডেড গণনা":"Age Magic Calculator";
+dobLabel.innerText=currentLang=="bn"?"জন্ম তারিখ নির্বাচন করুন":"Select Date of Birth";
+calcBtn.innerText=currentLang=="bn"?"বয়স হিসাব করুন":"Calculate Age";
+}
+
+function calculateAge(){
+clearInterval(timer);
+if(!dob.value){alert("জন্ম তারিখ দিন");return;}
+birthDate=new Date(dob.value);
+update();
+timer=setInterval(update,1000);
+}
+
+function update(){
+const now=new Date();
+const sec=Math.floor((now-birthDate)/1000);
+const days=Math.floor(sec/86400);
+
+let y=now.getFullYear()-birthDate.getFullYear();
+let m=now.getMonth()-birthDate.getMonth();
+let d=now.getDate()-birthDate.getDate();
+if(d<0){m--;d+=30} if(m<0){y--;m+=12}
+
+const hijri=new Intl.DateTimeFormat('en-TN-u-ca-islamic',{dateStyle:'long'}).format(birthDate);
+const bangla=Math.floor(y*0.97);
+
+let milestone="";
+if(days>=20000) milestone="🏆 ২০,০০০ দিন পূর্ণ!";
+else if(days>=10000) milestone="🎉 ১০,০০০ দিন পূর্ণ!";
+else if(days>=5000) milestone="✨ ৫,০০০ দিন পূর্ণ!";
+
+output.innerHTML=`
+<b>${currentLang=="bn"?"আপনার বয়স":"Your Age"}:</b><br>
+${y} বছর ${m} মাস ${d} দিন<br>
+⏱ ${sec.toLocaleString()} সেকেন্ড<br>
+📅 মোট দিন: ${days}<br><br>
+🇧🇩 বাংলা বয়স: ${bangla} বছর<br>
+☪ হিজরি জন্মতারিখ: ${hijri}<br><br>
+${milestone}
+`;
+
+ai.innerHTML=generateAI(y);
+drawCard(y,m,d,days);
+}
+
+function generateAI(age){
+if(currentLang=="bn"){
+if(age<20) return "🧠 আপনি শেখার পর্যায়ে আছেন। স্কিল ও আত্মবিশ্বাস গড়ুন।";
+if(age<30) return "🧠 ক্যারিয়ার ও সঞ্চয়ের জন্য সেরা সময়।";
+if(age<45) return "🧠 স্বাস্থ্য ও পরিবারের দিকে মনোযোগ দিন।";
+return "🧠 মানসিক শান্তি ও অভিজ্ঞতাই এখন সবচেয়ে মূল্যবান।";
+}else{
+if(age<20) return "🧠 Learning phase. Build skills and confidence.";
+if(age<30) return "🧠 Best time for career growth and savings.";
+if(age<45) return "🧠 Focus on health and family.";
+return "🧠 Focus on peace, health and legacy.";
+}
+}
+
+function drawCard(y,m,d,days){
+const c=cardCanvas,x=c.getContext("2d");
+x.fillStyle="#4f46e5";x.fillRect(0,0,400,220);
+x.fillStyle="#fff";x.font="bold 18px sans-serif";
+x.fillText("Age Card",20,30);
+x.font="16px sans-serif";
+x.fillText(`${y}y ${m}m ${d}d`,20,80);
+x.fillText(`Days: ${days}`,20,120);
+}
+
+function downloadCard(){
+const a=document.createElement("a");
+a.download="age-card.png";
+a.href=cardCanvas.toDataURL();
+a.click();
+}
+
+function generateQR(){
+const img=new Image();
+img.src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data="+encodeURIComponent(output.innerText);
+img.onload=()=>{qrCanvas.getContext("2d").drawImage(img,0,0);qrCanvas.style.display="block";}
+}
+</script>
+</body>
+</html>
