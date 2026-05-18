@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>খামার ডিটেকশন সিস্টেম (AI)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 10px;
+        }
+        h2 { color: #333; }
+        .container {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+            max-width: 500px;
+        }
+        video {
+            width: 100%;
+            border-radius: 10px;
+            background-color: #000;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        #status {
+            font-weight: bold;
+            color: blue;
+            margin-bottom: 10px;
+        }
+        #counter {
+            font-size: 18px;
+            margin: 15px 0;
+            padding: 10px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <h2>খামার এআই ডিটেকশন</h2>
+    <div id="status">মডেল লোড হচ্ছে, দয়া করে অপেক্ষা করুন...</div>
+    
+    <div id="counter">
+        👨 মানুষ: <span id="man-count">০</span> | 🐄 গরু: <span id="cow-count">০</span>
+    </div>
+
+    <div class="container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusText = document.getElementById('status');
+        const manCountSpan = document.getElementById('man-count');
+        const cowCountSpan = document.getElementById('cow-count');
+        
+        let model = undefined;
+
+        // ১. ক্যামেরা চালু করা (ফোনের পিছনের ক্যামেরা বা ব্যাক ক্যামেরা)
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" }, // "environment" দিলে পিছনের ক্যামেরা চালু হবে
+                audio: false
+            });
+            video.srcObject = stream;
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    resolve(video);
+                };
+            });
+        }
+
+        // ২. অবজেক্ট ডিটেক্ট করা এবং স্ক্রিনে বক্স আঁকা
+        async function predictLoop() {
+            // ক্যানভাস সাইজ ভিডিওর সাথে ম্যাচ করা
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            // মডেলে ভিডিও ফ্রেম পাঠিয়ে প্রেডিকশন নেওয়া
+            const predictions = await model.detect(video);
+            
+            // ক্যানভাস পরিষ্কার করা
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let manCount = 0;
+            let cowCount = 0;
+
+            predictions.forEach(prediction => {
+                const className = prediction.class;
+                
+                // আমরা শুধু মানুষ (person) এবং গরু (cow) গুনব
+                if (className === 'person' || className === 'cow') {
+                    if (className === 'person') manCount++;
+                    if (className === 'cow') cowCount++;
+
+                    // বক্সের কোঅর্ডিনেট
+                    const [x, y, width, height] = prediction.bbox;
+                    
+                    // স্ক্রিনে বক্স আঁকা
+                    ctx.strokeStyle = className === 'person' ? '#FF0000' : '#00FF00'; // মানুষের জন্য লাল, গরুর জন্য সবুজ
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(x, y, width, height);
+
+                    // টেক্সট বা লেবেল বসানো
+                    ctx.fillStyle = className === 'person' ? '#FF0000' : '#00FF00';
+                    ctx.font = '24px Arial';
+                    ctx.fillText(
+                        `${className === 'person' ? 'Man' : 'Cow'} (${Math.round(prediction.score * 100)}%)`, 
+                        x, y > 20 ? y - 10 : 10
+                    );
+                }
+            });
+
+            // কাউন্টার আপডেট করা
+            manCountSpan.innerText = manCount;
+            cowCountSpan.innerText = cowCount;
+
+            // লুপ চালু রাখা যাতে লাইভ ভিডিও স্ক্যান হতে থাকে
+            requestAnimationFrame(predictLoop);
+        }
+
+        // ৩. মেইন ফাংশন রান করা
+        async function main() {
+            try {
+                await setupCamera();
+                statusText.innerText = "ক্যামেরা চালু হয়েছে। মডেল ডাউনলোড হচ্ছে...";
+                
+                // COCO-SSD মডেল লোড করা
+                model = await cocoSsd.load();
+                statusText.innerText = "সিস্টেম রেডি! ক্যামেরা খামারের দিকে ধরুন।";
+                
+                // ডিটেকশন শুরু
+                predictLoop();
+            } catch (error) {
+                statusText.innerText = "ক্যামেরা পারমিশন দেওয়া হয়নি বা কোনো সমস্যা হয়েছে।";
+                console.error(error);
+            }
+        }
+
+        // পেজ লোড হলে সিস্টেম রান হবে
+        window.onload = main;
+    </script>
+</body>
+</html>
